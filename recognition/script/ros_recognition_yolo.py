@@ -31,7 +31,7 @@ class Camera_subscriber(Node):
     def __init__(self):
         super().__init__('camera_subscriber')
 
-        weights='yolov5s.pt'  # model.pt path(s)
+        weights='best.pt'  # model.pt path(s)
         self.imgsz=640  # inference size (pixels)
         self.conf_thres=0.25  # confidence threshold
         self.iou_thres=0.45  # NMS IOU threshold
