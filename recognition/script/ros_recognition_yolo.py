@@ -4,7 +4,7 @@ import rclpy
 from rclpy.node import Node
 
 from sensor_msgs.msg import Image, CompressedImage
-from cv_bridge import CvBridge, CvBridgeError
+from cv_bridge import CvBridge
 import cv2
 
 import numpy as np
@@ -81,7 +81,7 @@ class Camera_subscriber(Node):
 
         self.subscription = self.create_subscription(
             Image,
-            'rgb_cam/image_raw',
+            'zed2/zed_node/left_raw/image_raw_color',
             self.camera_callback,
             10)
         self.subscription  # prevent unused variable warning
