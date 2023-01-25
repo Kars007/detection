@@ -1,7 +1,6 @@
 import rclpy
 from rclpy.node import Node
 from cv_bridge import CvBridge
-from rclpy.time import Time
 from sensor_msgs.msg import Image, PointCloud2
 import cv2
 
@@ -22,7 +21,6 @@ import RPi.GPIO as GPIO
 GPIO.setmode(GPIO.BOARD)
 led_strip = GPIO.PWM(32,500)
 led_strip.start(0)
-
 
 class ImageSubscriber(Node):
     def __init__(self):

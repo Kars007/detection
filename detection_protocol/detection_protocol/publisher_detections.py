@@ -54,7 +54,7 @@ class MinimalPublisher(Node):
     def __init__(self):
         super().__init__('publisher_detections')
         self.publisher_ = self.create_publisher(Detections, 'detections', 10)
-        timer_period = 0.5  # seconds
+        timer_period = 0.1  # seconds
         self.timer = self.create_timer(timer_period, self.timer_callback)
         self.i = 0
 
