@@ -97,11 +97,8 @@ class ImageSubscriber(Node):
                 self.publisher.publish(self.bridge.cv2_to_imgmsg(img0, "bgra8"))
         
     def listener_callback_pcb(self, data):
-        print(rnp.numpify(data).shape)
-        
-        #self.pcd_as_numpy_array(rnp.point_cloud2.get_xyz_points(data))
-        #self.pcd_as_numpy_array(rnp.point_cloud2.get_xyz_points(rnp.numpify(data)))
-        #self.pcd_as_numpy_array = np.around(pcd, decimals=4)      
+        self.pcd_as_numpy_array(rnp.point_cloud2.get_xyz_points(rnp.point_cloud2_to_array(data), remove_nans=False)
+      
 
     def detection_average(self, i, j):
         average_array= np.empty(3,1)
