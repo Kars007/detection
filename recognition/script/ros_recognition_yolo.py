@@ -1,157 +1,129 @@
-#!/usr/bin/env python
-import os, sys
 import rclpy
 from rclpy.node import Node
-
-from sensor_msgs.msg import Image, CompressedImage
 from cv_bridge import CvBridge
+from rclpy.time import Time
+from sensor_msgs.msg import Image, PointCloud2
 import cv2
 
-import numpy as np
-import time
-from pathlib import Path
 import torch
-import torch.backends.cudnn as cudnn
-
-FILE = Path(__file__).absolute()
-sys.path.append(FILE.parents[0].as_posix())
-
+import numpy as np
+from numpy import random
 from models.experimental import attempt_load
-from utils.datasets import LoadStreams, LoadImages
-from utils.augmentations import Albumentations, augment_hsv, copy_paste, letterbox, mixup, random_perspective
-from utils.general import check_img_size, check_requirements, check_imshow, colorstr, non_max_suppression, \
-    apply_classifier, scale_coords, xyxy2xywh, strip_optimizer, set_logging, increment_path, save_one_box
-from utils.plots import colors, plot_one_box
-from utils.torch_utils import select_device, load_classifier, time_synchronized
+from utils.general import check_img_size, non_max_suppression, scale_coords, set_logging
+from utils.plots import plot_one_box
+from utils.torch_utils import select_device, time_synchronized, TracedModel
 
-bridge = CvBridge()
+import ros_numpy as rnp
 
-class Camera_subscriber(Node):
+from detection_interfaces.msg import Detections     
+from detection_interfaces.msg import Detected 
 
+import RPi.GPIO as GPIO
+GPIO.setmode(GPIO.BOARD)
+led_strip = GPIO.PWM(32,500)
+led_strip.start(0)
+
+
+class ImageSubscriber(Node):
     def __init__(self):
-        super().__init__('camera_subscriber')
+        super().__init__('image_subscriber')
+        self.pcd_as_numpy_array = np.array([], [])
+        self.pcd_subscription = self.create_subscription(PointCloud2, 'zed2/zed_node/point_cloud/cloud_registered', self.listener_callback_pcb, 10)
+        self.subscription = self.create_subscription(Image, 'zed2/zed_node/left/image_rect_color', self.listener_callback, 10)
+        self.subscription # prevent unused variable warning
+        self.pcd_subscription
+        self.publisher = self.create_publisher(Image, 'Yolo_result', 10)
+        self.publisher_detections = self.create_publisher(Detections, "detections", 10)
+        
+        self.bridge = CvBridge()
 
-        weights='best.pt'  # model.pt path(s)
-        self.imgsz=640  # inference size (pixels)
-        self.conf_thres=0.25  # confidence threshold
-        self.iou_thres=0.45  # NMS IOU threshold
-        self.max_det=1000  # maximum detections per image
-        self.classes=None  # filter by class: --class 0, or --class 0 2 3
-        self.agnostic_nms=False  # class-agnostic NMS
-        self.augment=False  # augmented inference
-        self.visualize=False  # visualize features
-        self.line_thickness=3  # bounding box thickness (pixels)
-        self.hide_labels=False  # hide labels
-        self.hide_conf=False  # hide confidences
-        self.half=False  # use FP16 half-precision inference
-        self.stride = 32
-        device_num=''  # cuda device, i.e. 0 or 0,1,2,3 or cpu
-        view_img=False  # show results
-        save_crop=False  # save cropped prediction boxes
-        nosave=False  # do not save images/videos
-        update=False  # update all models
-        name='exp'  # save results to project/name
-
-        # Initialize
+        device = 'cuda:0'
         set_logging()
-        self.device = select_device(device_num)
-        self.half &= self.device.type != 'cpu'  # half precision only supported on CUDA
+        device = select_device('0')
+        self.device = device
+        half = device.type != 'cpu'
+        self.half = half
+        weights = 'best.pt'
+        imgsz = 416
+        led_strip.ChangeDutyCycle(50)
+        model = attempt_load(weights, map_location=device)
+        stride = int(model.stride.max())
+        imgsz = check_img_size(imgsz, s=stride)
+        model = TracedModel(model, device, img_size=imgsz)
+        model.half()
+        names = model.module.names if hasattr(model, 'module') else model.names
+        self.names = names
+        print(names)
+        colors = [[random.randint(0,255) for _ in range(3)] for _ in names]
+        self.colors = colors
+        if device.type != 'cpu':
+            model(torch.zeros(1, 3, imgsz, imgsz).to(device).type_as(next(model.parameters())))
+        self.model = model
 
-        # Load model
-        self.model = attempt_load(weights, map_location=self.device)  # load FP32 model
-        stride = int(self.model.stride.max())  # model stride
-        imgsz = check_img_size(self.imgsz, s=stride)  # check image size
-        self.names = self.model.module.names if hasattr(self.model, 'module') else self.model.names  # get class names
-        if self.half:
-            self.model.half()  # to FP16
-
-        # Second-stage classifier
-        self.classify = False
-        if self.classify:
-            self.modelc = load_classifier(name='resnet50', n=2)  # initialize
-            self.modelc.load_state_dict(torch.load('resnet50.pt', map_location=self.device)['model']).to(self.device).eval()
-
-        # Dataloader
-        view_img = check_imshow()
-        cudnn.benchmark = True  # set True to speed up constant image size inference
-
-        # Run inference
-        if self.device.type != 'cpu':
-            self.model(torch.zeros(1, 3, imgsz, imgsz).to(self.device).type_as(next(self.model.parameters())))  # run once
-
-        self.subscription = self.create_subscription(
-            Image,
-            'zed2/zed_node/left_raw/image_raw_color',
-            self.camera_callback,
-            10)
-        self.subscription  # prevent unused variable warning
-
-    def camera_callback(self, data):
-        t0 = time.time()
-        img = bridge.imgmsg_to_cv2(data, "bgr8")
-
-        # check for common shapes
-        s = np.stack([letterbox(x, self.imgsz, stride=self.stride)[0].shape for x in img], 0)  # shapes
-        self.rect = np.unique(s, axis=0).shape[0] == 1  # rect inference if all shapes equal
-        if not self.rect:
-            print('WARNING: Different stream shapes detected. For optimal performance supply similarly-shaped streams.')
-
-        # Letterbox
-        img0 = img.copy()
-        img = img[np.newaxis, :, :, :]        
-
-        # Stack
-        img = np.stack(img, 0)
-
-        # Convert
-        img = img[..., ::-1].transpose((0, 3, 1, 2))  # BGR to RGB, BHWC to BCHW
+    def listener_callback(self, data):
+        msg = Detections()
+        msg.header.stamp = self.get_clock().now().to_msg()
+        self.get_logger().info('Receiving image')
+        img0 = self.bridge.imgmsg_to_cv2(data)
+        img1= cv2.cvtColor(img0, cv2.COLOR_RGBA2RGB) #change rgba image to rgb, needed for the yolo model to work
+        img = img1[:, :, ::-1].transpose(2, 0, 1)
         img = np.ascontiguousarray(img)
-
         img = torch.from_numpy(img).to(self.device)
-        img = img.half() if self.half else img.float()  # uint8 to fp16/32
-        img /= 255.0  # 0 - 255 to 0.0 - 1.0
+        img = img.half() if self.half else img.float()
+        img /= 255.0
         if img.ndimension() == 3:
             img = img.unsqueeze(0)
-
-        # Inference
-        t1 = time_synchronized()
-        pred = self.model(img,
-                     augment=self.augment,
-                     visualize=increment_path(save_dir / 'features', mkdir=True) if self.visualize else False)[0]
-
-        # Apply NMS
-        pred = non_max_suppression(pred, self.conf_thres, self.iou_thres, self.classes, self.agnostic_nms, max_det=self.max_det)
-        t2 = time_synchronized()
-
-        # Apply Classifier
-        if self.classify:
-            pred = apply_classifier(pred, self.modelc, img, img0)
-
-        # Process detections
+        with torch.no_grad():
+            pred = self.model(img, augment=False)[0]
+        conf_thres = 0.1
+        iou_thres = 0.45
+        pred = non_max_suppression(pred, conf_thres, iou_thres, classes=None, agnostic=False)
         for i, det in enumerate(pred):  # detections per image
-            s = f'{i}: '
-            s += '%gx%g ' % img.shape[2:]  # print string
-
+            s = ""
+            gn = torch.tensor(img0.shape)[[1,0,1,0]]
             if len(det):
                 # Rescale boxes from img_size to im0 size
                 det[:, :4] = scale_coords(img.shape[2:], det[:, :4], img0.shape).round()
+                for *xyxy, conf, cls in reversed(det):                   
+                    i, j = (int(xyxy[0]), int(xyxy[1])), (int(xyxy[2]), int(xyxy[3]))  #get the pixels of the bounding box
+                    center_point = round((i[0]+j[0])/2), j[1]    #get the middle point od the bounding box
+                    circle = cv2.circle(img0, center_point, 2, (0,255,0), 1)  #place a circle at the middle point
+                    xyz_pos = self.detection_average(center_point[0], center_point[1])
+                    if xyz_pos[0] == 0:
+                        continue    # When a xyz position has 0 it inclinse that the average that was calculate was done with only NaN, which is why this detection will be disregarded
+                    label = f'{self.names[int(cls)]} {conf:.2f} {xyz_pos}'
+                    plot_one_box(xyxy, img0, label=label, color=self.colors[int(cls)], line_thickness=1)
+                    #text_coord = cv2.putText(img0, str(xyz_pos), center_point, cv2.FONT_HERSHEY_PLAIN, 2, (0, 0, 255))
+                    msg.detected.append(detection_to_msg(self.names[int(cls)], xyz_pos[0], xyz_pos[1], xyz_pos[2]))
+                self.publisher_detections.publish(msg)
+                self.publisher.publish(self.bridge.cv2_to_imgmsg(img0, "bgra8"))
+        
+    def listener_callback_pcb(self, data):
+        self.pcd_as_numpy_array(rnp.point_cloud2.get_xyz_points(data))
+        #self.pcd_as_numpy_array(rnp.point_cloud2.get_xyz_points(rnp.numpify(data)))
+        #self.pcd_as_numpy_array = np.around(pcd, decimals=4)      
 
-                # Print results
-                for c in det[:, -1].unique():
-                    n = (det[:, -1] == c).sum()  # detections per class
-                    s += f"{n} {self.names[int(c)]}{'s' * (n > 1)}, "  # add to string
-                
-                for *xyxy, conf, cls in reversed(det):
-                    c = int(cls)  # integer class
-                    label = None if self.hide_labels else (self.names[c] if self.hide_conf else f'{self.names[c]} {conf:.2f}')
-                    plot_one_box(xyxy, img0, label=label, color=colors(c, True), line_thickness=self.line_thickness)
+    def detection_average(self, i, j):
+        average_array= np.empty(3,1)
+        for i in range(3):
+            average_array.append([self.pcd_as_numpy_array()], [self.pcd_as_numpy_array()], [self.pcd_as_numpy_array()])
+        return np.nanmean(average_array, axis=0)
 
-        cv2.imshow("IMAGE", img0)
-        cv2.waitKey(4)    
+def detection_to_msg(type, x, y, z):
+    detection_msg = Detected()
+    detection_msg.type = type
+    detection_msg.position.x = x
+    detection_msg.position.y = y
+    detection_msg.position.z = z       
+    return detection_msg 
 
-if __name__ == '__main__':
-    rclpy.init(args=None)
-    camera_subscriber = Camera_subscriber()
-    rclpy.spin(camera_subscriber)
+def main(args=None):
+    rclpy.init(args=args)
+    image_subscriber = ImageSubscriber()
+    led_strip.ChangeDutyCycle(99)
+    rclpy.spin(image_subscriber)
+    image_subscriber.destroy_node()
     rclpy.shutdown()
 
+if __name__ == "__main__":
+    main()
