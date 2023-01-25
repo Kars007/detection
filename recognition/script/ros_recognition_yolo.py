@@ -12,7 +12,7 @@ from utils.general import check_img_size, non_max_suppression, scale_coords, set
 from utils.plots import plot_one_box
 from utils.torch_utils import select_device, time_synchronized, TracedModel
 
-import ros_numpy as rnp
+import ros2_numpy as rnp
 
 from detection_interfaces.msg import Detections     
 from detection_interfaces.msg import Detected 
