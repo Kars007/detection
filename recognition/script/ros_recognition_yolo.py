@@ -86,18 +86,20 @@ class ImageSubscriber(Node):
                     i, j = (int(xyxy[0]), int(xyxy[1])), (int(xyxy[2]), int(xyxy[3]))  #get the pixels of the bounding box
                     center_point = round((i[0]+j[0])/2), j[1]    #get the middle point od the bounding box
                     circle = cv2.circle(img0, center_point, 2, (0,255,0), 1)  #place a circle at the middle point
-                    xyz_pos = self.detection_average(center_point[0], center_point[1])
-                    if xyz_pos[0] == 0:
-                        continue    # When a xyz position has 0 it inclinse that the average that was calculate was done with only NaN, which is why this detection will be disregarded
-                    label = f'{self.names[int(cls)]} {conf:.2f} {xyz_pos}'
+                    #xyz_pos = self.detection_average(center_point[0], center_point[1])
+                    #if xyz_pos[0] == 0:
+                    #    continue    # When a xyz position has 0 it inclinse that the average that was calculate was done with only NaN, which is why this detection will be disregarded
+                    label = f'{self.names[int(cls)]} {conf:.2f} '
                     plot_one_box(xyxy, img0, label=label, color=self.colors[int(cls)], line_thickness=1)
                     #text_coord = cv2.putText(img0, str(xyz_pos), center_point, cv2.FONT_HERSHEY_PLAIN, 2, (0, 0, 255))
-                    msg.detected.append(detection_to_msg(self.names[int(cls)], xyz_pos[0], xyz_pos[1], xyz_pos[2]))
-                self.publisher_detections.publish(msg)
+                    #msg.detected.append(detection_to_msg(self.names[int(cls)], xyz_pos[0], xyz_pos[1], xyz_pos[2]))
+                #self.publisher_detections.publish(msg)
                 self.publisher.publish(self.bridge.cv2_to_imgmsg(img0, "bgra8"))
         
     def listener_callback_pcb(self, data):
-        self.pcd_as_numpy_array(rnp.point_cloud2.get_xyz_points(data))
+        print(rnp.numpify(data).shape)
+        
+        #self.pcd_as_numpy_array(rnp.point_cloud2.get_xyz_points(data))
         #self.pcd_as_numpy_array(rnp.point_cloud2.get_xyz_points(rnp.numpify(data)))
         #self.pcd_as_numpy_array = np.around(pcd, decimals=4)      
 
