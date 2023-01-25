@@ -32,7 +32,7 @@ class ImageSubscriber(Node):
         self.pcd_subscription
         self.publisher = self.create_publisher(Image, 'Yolo_result', 10)
         self.publisher_detections = self.create_publisher(Detections, "detections", 10)
-        
+
         self.bridge = CvBridge()
 
         device = 'cuda:0'
@@ -82,28 +82,36 @@ class ImageSubscriber(Node):
             if len(det):
                 # Rescale boxes from img_size to im0 size
                 det[:, :4] = scale_coords(img.shape[2:], det[:, :4], img0.shape).round()
-                for *xyxy, conf, cls in reversed(det):                   
+                for *xyxy, conf, cls in reversed(det):
                     i, j = (int(xyxy[0]), int(xyxy[1])), (int(xyxy[2]), int(xyxy[3]))  #get the pixels of the bounding box
                     center_point = round((i[0]+j[0])/2), j[1]    #get the middle point od the bounding box
-                    circle = cv2.circle(img0, center_point, 2, (0,255,0), 1)  #place a circle at the middle point
-                    #xyz_pos = self.detection_average(center_point[0], center_point[1])
-                    #if xyz_pos[0] == 0:
-                    #    continue    # When a xyz position has 0 it inclinse that the average that was calculate was done with only NaN, which is why this detection will be disregarded
-                    label = f'{self.names[int(cls)]} {conf:.2f} '
+                    circle = cv2.circle(img0, center_point, 1, (0,0,255), 1)  #place a circle at the middle point
+                    xyz_pos = self.detection_average(int(center_point[0]), int(center_point[1]))
+                    if xyz_pos[0] == 0 or xyz_pos[0] == np.nan:
+                         continue    # When a xyz position has 0 it inclinse that the average that was calculate was done with only NaN, which is why this detection will be disregarded
+                    label = f'{self.names[int(cls)]} {conf:.2f} {xyz_pos}'
                     plot_one_box(xyxy, img0, label=label, color=self.colors[int(cls)], line_thickness=1)
-                    #text_coord = cv2.putText(img0, str(xyz_pos), center_point, cv2.FONT_HERSHEY_PLAIN, 2, (0, 0, 255))
-                    #msg.detected.append(detection_to_msg(self.names[int(cls)], xyz_pos[0], xyz_pos[1], xyz_pos[2]))
-                #self.publisher_detections.publish(msg)
+                    msg.detected.append(detection_to_msg(self.names[int(cls)], xyz_pos[0], xyz_pos[1], xyz_pos[2]))
+                self.publisher_detections.publish(msg)
                 self.publisher.publish(self.bridge.cv2_to_imgmsg(img0, "bgra8"))
-        
+
     def listener_callback_pcb(self, data):
-        self.pcd_as_numpy_array(rnp.point_cloud2.get_xyz_points(rnp.point_cloud2_to_array(data), remove_nans=False)
-      
+        self.pcd_as_numpy_array = rnp.point_cloud2.get_xyz_points(rnp.point_cloud2.pointcloud2_to_array(data), remove_nans=False)
 
     def detection_average(self, i, j):
-        average_array= np.empty(3,1)
-        for i in range(3):
-            average_array.append([self.pcd_as_numpy_array()], [self.pcd_as_numpy_array()], [self.pcd_as_numpy_array()])
+        average_array= np.zeros(shape=(9,3))
+        n = 0
+        for x in range(-1,2):
+            if j > 510:  #if point outsite of picture it will fill that part of the array with NaN
+                average_array[n] = [np.nan, np.nan, np.nan]
+                average_array[n+1] = [np.nan, np.nan, np.nan]
+                average_array[n+2] = [np.nan, np.nan, np.nan]
+                n+=3
+                continue
+            average_array[n] = [self.pcd_as_numpy_array[(j+x)][(i-1)][0], self.pcd_as_numpy_array[(j+x)][(i-1)][1], self.pcd_as_numpy_array[(j+x)][(i-1)][2]]
+            average_array[n+1] = [self.pcd_as_numpy_array[(j+x)][i][0], self.pcd_as_numpy_array[(j+x)][i][1], self.pcd_as_numpy_array[(j+x)][i][2]]
+            average_array[n+2] = [self.pcd_as_numpy_array[(j+x)][(i+1)][0], self.pcd_as_numpy_array[(j+x)][(i+1)][1], self.pcd_as_numpy_array[(j+x)][(i+1)][2]]
+            n+=3
         return np.nanmean(average_array, axis=0)
 
 def detection_to_msg(type, x, y, z):
