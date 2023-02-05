@@ -43,7 +43,7 @@ class ImageSubscriber(Node):
         self.half = half
         weights = 'best.pt'
         imgsz = 416
-        led_strip.ChangeDutyCycle(50)
+        led_strip.ChangeDutyCycle(30)
         model = attempt_load(weights, map_location=device)
         stride = int(model.stride.max())
         imgsz = check_img_size(imgsz, s=stride)
